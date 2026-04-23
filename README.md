@@ -26,15 +26,24 @@ Eventually extends to test the 11-signal oracle-aware stack in
 Early development. Scanner refactor pending. Not trading live.
 Not financial advice.
 
-## Quick start (once scanner is wired)
+## Quick start
 
 ```bash
 python -m venv .venv
 source .venv/Scripts/activate   # Git Bash on Windows
 pip install -r requirements.txt
 cp .env.example .env
-pm-trader --account sumarb init --balance 500
+
+# Optional sanity check: imports, engine init, one /events fetch. ~10s.
+python scripts/health_check.py
+
+# Run the harness. First run auto-initializes the paper account
+# at INITIAL_BALANCE_USD from .env. Ctrl-C to stop; prints a session
+# summary and writes data/trades.jsonl.
 python src/paper_bridge.py
+
+# After a session, bucket the JSONL into fill rate / slippage / post-fee edge.
+python scripts/analyze_trades.py
 ```
 
 ## References

@@ -56,8 +56,12 @@ logging.basicConfig(
 log = logging.getLogger("paper_bridge")
 
 
+TRADE_SCHEMA_VERSION = 1
+
+
 @dataclass
 class Trade:
+    schema_version: int
     ts: float
     market_slug: str
     market_id: str
@@ -118,6 +122,7 @@ def try_paper_trade(engine: Engine, opp: dict) -> Trade:
     claimed   = ask_yes + ask_no
 
     trade = Trade(
+        schema_version=TRADE_SCHEMA_VERSION,
         ts=time.time(),
         market_slug=slug,
         market_id=opp.get("market_id", ""),

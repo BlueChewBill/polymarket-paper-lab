@@ -318,21 +318,26 @@ async def _stream_once(
 
             msgs = payload if isinstance(payload, list) else [payload]
             for msg in msgs:
-                market = _handle_ws_message(msg, token_map)
-                if market is None or market.fired or market.market_id in fired_ids:
-                    continue
+                try:
+                    market = _handle_ws_message(msg, token_map)
+                    if market is None or market.fired or market.market_id in fired_ids:
+                        continue
 
-                opp = _build_opportunity(market, sum_threshold, min_depth_usd)
-                if opp is None:
-                    continue
+                    opp = _build_opportunity(market, sum_threshold, min_depth_usd)
+                    if opp is None:
+                        continue
 
-                market.fired = True
-                fired_ids.add(market.market_id)
-                _log_alert_line(opp)
+                    market.fired = True
+                    fired_ids.add(market.market_id)
+                    _log_alert_line(opp)
 
-                result = on_opportunity(opp)
-                if asyncio.iscoroutine(result):
-                    await result
+                    result = on_opportunity(opp)
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception as e:
+                    # One bad packet or one failing callback must not kill
+                    # the WS session. Log and keep listening.
+                    log.exception(f"per-message handler error: {e!r}")
 
 
 async def run_scanner(
