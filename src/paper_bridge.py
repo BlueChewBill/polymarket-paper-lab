@@ -185,7 +185,44 @@ def persist(trade: Trade) -> None:
         f.write(json.dumps(asdict(trade)) + "\n")
 
 
+async def _resolve_per_market(engine: Engine) -> None:
+    """Fallback: try engine.resolve(slug) for each open position
+    individually, tolerating per-market failures. Silent on individual
+    errors; aggregate summary at info level."""
+    try:
+        positions = engine.portfolio()
+    except Exception as e:
+        log.debug(f"portfolio read failed: {e!r}")
+        return
+    if not positions:
+        return
+    ok, skipped = 0, 0
+    for pos in positions:
+        slug = (pos.get("slug") if isinstance(pos, dict)
+                else getattr(pos, "slug", None))
+        if not slug:
+            continue
+        try:
+            engine.resolve(slug)
+            ok += 1
+        except Exception:
+            # Per-market failure (most often: slug has rolled off
+            # gamma's cache). Expected and non-fatal.
+            skipped += 1
+    if ok or skipped:
+        log.info(f"RESOLVE  per-market ok={ok} skipped={skipped}")
+
+
 async def resolve_loop(engine: Engine, interval: int = 60):
+    """Periodically settle any markets that have closed.
+
+    pm_trader's resolve_all() is all-or-nothing: if one open position
+    has a slug the gamma API no longer returns (short-duration markets
+    roll off gamma's cache within hours), the whole bulk call raises.
+    We fall back to per-market resolve that tolerates individual
+    failures. Effect is cosmetic only -- phase-0 analysis reads from
+    data/trades.jsonl, not pm_trader's DB.
+    """
     while True:
         try:
             resolved = engine.resolve_all()
@@ -193,7 +230,8 @@ async def resolve_loop(engine: Engine, interval: int = 60):
                 payout = sum(float(getattr(r, "payout", 0.0) or 0.0) for r in resolved)
                 log.info(f"RESOLVE  settled={len(resolved)}  payout=${payout:.2f}")
         except Exception as e:
-            log.error(f"resolve_all error: {e!r}")
+            log.debug(f"resolve_all (bulk) failed: {e!r}")
+            await _resolve_per_market(engine)
         await asyncio.sleep(interval)
 
 
