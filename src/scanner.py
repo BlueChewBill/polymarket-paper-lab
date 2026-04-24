@@ -299,7 +299,12 @@ async def _stream_once(
         await asyncio.sleep(stop_after_sec)
         return
 
-    async with websockets.connect(CLOB_WS, ping_interval=20) as ws:
+    # max_size: 238 Up/Down markets => ~476 tokens => ~1.2 MiB initial
+    # book snapshot, which blows past websockets' 1 MiB default. Give it
+    # real headroom (16 MiB) so the scanner scales to the whole /events
+    # horizon without frame-too-big drops.
+    async with websockets.connect(CLOB_WS, ping_interval=20,
+                                   max_size=16 * 1024 * 1024) as ws:
         subscription = {"type": "market", "assets_ids": list(token_map.keys())}
         await ws.send(json.dumps(subscription))
 
