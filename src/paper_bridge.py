@@ -35,8 +35,21 @@ from scanner import run_scanner  # noqa: E402
 
 load_dotenv()
 
-SUM_THRESHOLD       = float(os.getenv("SUM_THRESHOLD", "0.99"))
-MIN_DEPTH_USD       = float(os.getenv("MIN_DEPTH_USD", "5"))
+#
+# THRESHOLD RATIONALE (derived from first run, 2026-04-23)
+#
+#   Pre-fee break-even:  sum * 1.072 = 1.00  ->  sum = 0.9329
+#   Observed slippage:   median +500 bps, p75 +943 bps, p95 +3376 bps
+#
+# For a filter that's profitable on the MEDIAN slippage case with ~2%
+# expected edge:  top_of_book_sum + 0.05 < 0.913  ->  sum < 0.863.
+# Rounded to 0.86. At 0.99 threshold, every single one of 45 filled
+# trades was a post-fee loser (0% positive-edge in live data).
+#
+# Depth: 3x trade notional filters out top-of-book-only books.
+#
+SUM_THRESHOLD       = float(os.getenv("SUM_THRESHOLD", "0.86"))
+MIN_DEPTH_USD       = float(os.getenv("MIN_DEPTH_USD", "15"))
 MAX_HOURS_OUT       = float(os.getenv("MAX_HOURS_OUT", "2"))
 TRADE_NOTIONAL_USD  = float(os.getenv("TRADE_NOTIONAL_USD", "5"))
 ACCOUNT_NAME        = os.getenv("PM_ACCOUNT", "sumarb")
