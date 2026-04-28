@@ -52,7 +52,9 @@ MODE=demo
 POLY_PRIVATE_KEY=
 ORACLE_SOURCE=polymarket
 OLS_HOME=/home/ubuntu/oracle-lag-sniper
-ASSETS=btc,eth,xrp,sol
+# BTC only -- live data showed BTC is the only asset with consistent
+# positive expectancy. ETH/XRP/SOL drag the portfolio. See project memory.
+ASSETS=btc
 NOTIONAL_PER_TRADE=5.0
 DEMO_SLIPPAGE=0.02
 COMMENTS_ENABLED=false
