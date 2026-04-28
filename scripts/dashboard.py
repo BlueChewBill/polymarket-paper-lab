@@ -28,8 +28,8 @@ REPO_ROOT   = Path(__file__).resolve().parent.parent
 TRADES_FILE = REPO_ROOT / "data" / "trades.jsonl"
 PAPER_DB    = Path.home() / ".pm-trader" / "sumarb" / "paper.db"
 
-SNIPER_LOGS  = Path("C:/Users/dylan/polymarket/files/oracle-lag-sniper/var/logs")
-SNIPER_STATE = SNIPER_LOGS / "state.json"
+SNIPER_LOCAL_LOGS = Path("C:/Users/dylan/polymarket/files/oracle-lag-sniper/var/logs")
+SNIPER_CLOUD_LOGS = Path.home() / ".ols-sniper-cloud" / "var" / "logs"
 
 WIDTH = 48  # inner content is WIDTH - 4 chars
 
@@ -100,11 +100,12 @@ def filled_trades(trades: list[dict]) -> list[dict]:
     return [t for t in trades if t.get("both_filled")]
 
 
-def _read_sniper_state() -> dict | None:
-    if not SNIPER_STATE.exists():
+def _read_sniper_state(logs_dir: Path) -> dict | None:
+    state_file = logs_dir / "state.json"
+    if not state_file.exists():
         return None
     try:
-        return json.loads(SNIPER_STATE.read_text(encoding="utf-8"))
+        return json.loads(state_file.read_text(encoding="utf-8"))
     except Exception:
         return None
 
@@ -119,19 +120,19 @@ def _count_jsonl_lines(path: Path) -> int:
         return 0
 
 
-def _sniper_summarize() -> dict | None:
+def _sniper_summarize(logs_dir: Path) -> dict | None:
     """Pull sniper funnel numbers from state.json + JSONL line counts.
 
-    Returns None if the sniper has never run (no state.json).
+    Returns None if the sniper has never run (no state.json and no dir).
     """
-    state = _read_sniper_state()
-    if state is None and not SNIPER_LOGS.exists():
+    state = _read_sniper_state(logs_dir)
+    if state is None and not logs_dir.exists():
         return None
 
-    signals  = _count_jsonl_lines(SNIPER_LOGS / "signals.jsonl")
-    attempts = _count_jsonl_lines(SNIPER_LOGS / "attempts.jsonl")
-    trades   = _count_jsonl_lines(SNIPER_LOGS / "trades.jsonl")
-    resolved = _count_jsonl_lines(SNIPER_LOGS / "resolutions.jsonl")
+    signals  = _count_jsonl_lines(logs_dir / "signals.jsonl")
+    attempts = _count_jsonl_lines(logs_dir / "attempts.jsonl")
+    trades   = _count_jsonl_lines(logs_dir / "trades.jsonl")
+    resolved = _count_jsonl_lines(logs_dir / "resolutions.jsonl")
 
     wins = int((state or {}).get("total_wins") or 0)
     total_trades = int((state or {}).get("total_trades") or trades)
@@ -140,6 +141,12 @@ def _sniper_summarize() -> dict | None:
     mode = (state or {}).get("mode", "?")
     cb = bool((state or {}).get("circuit_breaker") or False)
     ks = bool((state or {}).get("kill_switch") or False)
+
+    # Freshness: how long since state.json was last modified. Useful for
+    # the cloud section -- if the rsync hasn't run in a while, this will
+    # tell you the data is stale.
+    state_path = logs_dir / "state.json"
+    last_state_mtime = state_path.stat().st_mtime if state_path.exists() else 0
 
     return {
         "mode":          mode,
@@ -153,7 +160,35 @@ def _sniper_summarize() -> dict | None:
         "daily_pnl":     daily_pnl,
         "circuit_break": cb,
         "kill_switch":   ks,
+        "last_mtime":    last_state_mtime,
     }
+
+
+def _render_sniper_section(out: list, title: str, sniper: dict | None,
+                            show_freshness: bool = False) -> None:
+    """Append a sniper section to the output list."""
+    out.append(_rule())
+    out.append(_line(title))
+    out.append(_rule())
+    if sniper is None:
+        out.append(_line("(no state.json - not running / not synced)"))
+        return
+    wr = (sniper["wins"] / sniper["resolved"] * 100) if sniper["resolved"] else 0
+    out.extend([
+        _line(f"mode              {sniper['mode']:>5s}"),
+        _line(f"signals fired     {sniper['signals']:>5d}"),
+        _line(f"entry attempts    {sniper['attempts']:>5d}"),
+        _line(f"trades entered    {sniper['total_trades']:>5d}"),
+        _line(f"resolved          {sniper['resolved']:>5d}"),
+        _line(f"wins              {sniper['wins']:>5d}  ({wr:5.1f}%)"),
+        _line(f"cumulative P&L ${sniper['cum_pnl']:>+10.2f}"),
+    ])
+    if sniper['daily_pnl']:
+        out.append(_line(f"daily P&L      ${sniper['daily_pnl']:>+10.2f}"))
+    if sniper['circuit_break'] or sniper['kill_switch']:
+        out.append(_line(f"!! CB={sniper['circuit_break']} KILL={sniper['kill_switch']}"))
+    if show_freshness and sniper.get('last_mtime'):
+        out.append(_line(f"last sync       {_fmt_ago(sniper['last_mtime']):>12s}"))
 
 
 def _fmt_ago(ts: float) -> str:
@@ -167,7 +202,8 @@ def _fmt_ago(ts: float) -> str:
     return f"{int(delta / 3600)}h ago"
 
 
-def _render(bal: dict | None, stats: dict, sniper: dict | None) -> str:
+def _render(bal: dict | None, stats: dict,
+            sniper_local: dict | None, sniper_cloud: dict | None) -> str:
     out = [
         _rule(),
         _line("POLYMARKET PAPER LAB  |  account: sumarb"),
@@ -208,29 +244,10 @@ def _render(bal: dict | None, stats: dict, sniper: dict | None) -> str:
         out.append(_line(f"fees paid       ${stats['fee_total']:>9.2f}"))
     out.append(_line(f"last activity   {_fmt_ago(stats['last_ts']):>12s}"))
 
-    # -------- oracle-lag sniper section --------
-    out.append(_rule())
-    out.append(_line("ORACLE-LAG SNIPER"))
-    out.append(_rule())
-    if sniper is None:
-        out.append(_line("(sniper not running - no state.json yet)"))
-    else:
-        # WR on resolved-only: unresolved trades aren't outcomes yet.
-        wr = (sniper["wins"] / sniper["resolved"] * 100) if sniper["resolved"] else 0
-        # Funnel: signals >= attempts >= entries >= resolved
-        out.extend([
-            _line(f"mode              {sniper['mode']:>5s}"),
-            _line(f"signals fired     {sniper['signals']:>5d}"),
-            _line(f"entry attempts    {sniper['attempts']:>5d}"),
-            _line(f"trades entered    {sniper['total_trades']:>5d}"),
-            _line(f"resolved          {sniper['resolved']:>5d}"),
-            _line(f"wins              {sniper['wins']:>5d}  ({wr:5.1f}%)"),
-            _line(f"cumulative P&L ${sniper['cum_pnl']:>+10.2f}"),
-        ])
-        if sniper['daily_pnl']:
-            out.append(_line(f"daily P&L      ${sniper['daily_pnl']:>+10.2f}"))
-        if sniper['circuit_break'] or sniper['kill_switch']:
-            out.append(_line(f"!! CB={sniper['circuit_break']} KILL={sniper['kill_switch']}"))
+    # -------- oracle-lag sniper sections (local + cloud A/B) --------
+    _render_sniper_section(out, "SNIPER (local: Round Rock)", sniper_local)
+    _render_sniper_section(out, "SNIPER (cloud: us-east-1)", sniper_cloud,
+                           show_freshness=True)
 
     out.append(_rule())
     out.append(_line(f"updated {datetime.now().strftime('%H:%M:%S')}   Ctrl-C quit"))
@@ -249,8 +266,9 @@ def main() -> int:
             _clear()
             bal = _read_balance()
             stats = _summarize(_read_trades())
-            sniper = _sniper_summarize()
-            print(_render(bal, stats, sniper))
+            sniper_local = _sniper_summarize(SNIPER_LOCAL_LOGS)
+            sniper_cloud = _sniper_summarize(SNIPER_CLOUD_LOGS)
+            print(_render(bal, stats, sniper_local, sniper_cloud))
             time.sleep(args.refresh)
     except KeyboardInterrupt:
         print()
