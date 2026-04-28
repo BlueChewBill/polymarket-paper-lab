@@ -173,13 +173,17 @@ def _render_sniper_section(out: list, title: str, sniper: dict | None,
     if sniper is None:
         out.append(_line("(no state.json - not running / not synced)"))
         return
-    wr = (sniper["wins"] / sniper["resolved"] * 100) if sniper["resolved"] else 0
+    # WR uses state.total_trades as the denominator (not the resolutions.jsonl
+    # line count -- that file logs one record per resolution event, which can
+    # be >1 per trade if both legs are tracked or if redeem cycles re-emit).
+    # state.total_trades and state.total_wins are paired and authoritative.
+    wr = (sniper["wins"] / sniper["total_trades"] * 100) if sniper["total_trades"] else 0
     out.extend([
         _line(f"mode              {sniper['mode']:>5s}"),
         _line(f"signals fired     {sniper['signals']:>5d}"),
         _line(f"entry attempts    {sniper['attempts']:>5d}"),
         _line(f"trades entered    {sniper['total_trades']:>5d}"),
-        _line(f"resolved          {sniper['resolved']:>5d}"),
+        _line(f"resolved (jsonl)  {sniper['resolved']:>5d}"),
         _line(f"wins              {sniper['wins']:>5d}  ({wr:5.1f}%)"),
         _line(f"cumulative P&L ${sniper['cum_pnl']:>+10.2f}"),
     ])
