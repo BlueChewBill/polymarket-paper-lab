@@ -23,19 +23,24 @@ echo "=== sniper bootstrap starting at $(date) ==="
 
 SNIPER_HOME=/home/ubuntu/oracle-lag-sniper
 
-# 1. System deps
+# 1. Install Python 3.11 (Ubuntu 22.04 ships with 3.10; sniper wheel needs >=3.11)
 apt-get update -y
-apt-get install -y python3-pip python3-venv git curl
+apt-get install -y software-properties-common curl git
+add-apt-repository -y ppa:deadsnakes/ppa
+apt-get update -y
+apt-get install -y python3.11 python3.11-venv
 
 # 2. OLS_HOME directory
 mkdir -p "$SNIPER_HOME/var/logs"
 chown -R ubuntu:ubuntu "$SNIPER_HOME"
 
-# 3. Install wheel into a clean venv as the ubuntu user
+# 3. Install wheel into a clean Python 3.11 venv as the ubuntu user.
+#    rm -rf first so re-runs after a failed bootstrap start clean.
 sudo -u ubuntu bash <<'USERSCRIPT'
 set -euo pipefail
 cd /home/ubuntu
-python3 -m venv .sniper-venv
+rm -rf .sniper-venv
+python3.11 -m venv .sniper-venv
 source .sniper-venv/bin/activate
 pip install --upgrade pip
 pip install https://github.com/JonathanPetersonn/oracle-lag-sniper/releases/latest/download/oracle_lag_sniper-1.2.0-py3-none-any.whl
